@@ -1,0 +1,4 @@
+**/__pycache__
+dataset/raw
+**/test.py
+runs
