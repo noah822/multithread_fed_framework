@@ -229,6 +229,7 @@ class fed_framework:
                     )
 
         start = time() 
+                
             
         for round in range(self.global_round):
             
@@ -274,7 +275,7 @@ class fed_framework:
                 self.__clients_tb_logging(_clients_loss)
 
         end = time()
-        print('{:.2s}'.format(end-start))
+        print('{:.2}s'.format(end-start))
         self.save_framework_state() 
     
     

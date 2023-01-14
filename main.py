@@ -39,6 +39,8 @@ class Client(fed.Client):
         
         self.model.train()
         
+        _loss = torch.tensor(.0)
+        
         for _ in range(epoch):
             for _, (a, v, label) in enumerate(self.dataloader):
                 
@@ -48,12 +50,20 @@ class Client(fed.Client):
                 
                 loss = criterion(pred, label)
                 
+<<<<<<< HEAD
                 loss -= critic(embedding_a, embedding_v).mean()
 
                 if self.cached_model is not None:
                     with torch.no_grad():
                         self.cached_model.eval()
                         _, _embedding_a, _embedding_v  = self.cached_model(a, v)
+=======
+                loss += -critic(embedding_a, embedding_v).mean()
+                
+                with torch.no_grad():
+                    self.cached_model.eval()
+                    _, _embedding_a, _embedding_v  = self.cached_model(a, v)
+>>>>>>> 6f016c17b0341649054ef3693e908766af781b39
                 
                     loss += (-(
                         critic(embedding_a, _embedding_a) +
@@ -66,6 +76,10 @@ class Client(fed.Client):
                 loss.backward()
                 
                 self.optimizer.step()
+                
+                _loss += loss
+                
+        return _loss / (len(self.dataloader.dataset) * epoch)
             
     
     def load_model(self, model_param):
@@ -186,6 +200,11 @@ if __name__ == '__main__':
     
     
     parser.add_argument('--use-tensorboard', action='store_true')
+<<<<<<< HEAD
+=======
+    parser.add_argument('--data-parallel', action='store_true')
+    parser.add_argument('--gpu-ids', default=None, type=str)
+>>>>>>> 6f016c17b0341649054ef3693e908766af781b39
     
     
     args = parser.parse_args()
@@ -240,6 +259,15 @@ if __name__ == '__main__':
     
     for i in range(args.num_client):
         _model = AVNet(output_dim=8)
+        
+        if args.data_parallel:
+            if args.gpu_ids is None:
+                _avaliable_cuda = [i for i in torch.cuda.device_count()]
+            else:
+                _avaliable_cuda = args.data_parallel.split(',')
+            _model = nn.DataParallel(_model, device_ids=_avaliable_cuda)
+        
+        
         _optimizer = torch.optim.SGD(_model.parameters(),
             lr=optimizer_config['lr'],
             momentum=optimizer_config['momentum'],
@@ -258,8 +286,8 @@ if __name__ == '__main__':
             ),
             batch_size=local_train_config['batch_size'],
             shuffle=True,
-            num_workers=32,
-            pin_memory=True
+            pin_memory=True,
+            num_workers=args.num_workers
         )
         
         weights[i] = len(_dataloader.dataset)
@@ -299,11 +327,15 @@ if __name__ == '__main__':
     )
      
     
+    
+    
     framework = fed.fed_framework(
-         clients=clients, server=server,
-         num_client=args.num_client, num_thread=args.num_thread,
-         global_round=args.round
-     )
+        clients=clients, server=server,
+        num_client=args.num_client, num_thread=args.num_thread,
+        global_round=args.round,
+        use_tensorboard=args.use_tensorboard
+    )
     framework.run()
+    
     
     
