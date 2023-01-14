@@ -3,7 +3,7 @@ import argparse
 from model.backbone import AVNet
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataloader
+from torch.utils.data import DataLoader
 import numpy as np
 
 
@@ -46,20 +46,21 @@ class Client(fed.Client):
                 
                 pred,  embedding_a,  embedding_v  = self.model(a, v)
                 
-                with torch.no_grad():
-                    self.cached_model.eval()
-                    _, _embedding_a, _embedding_v  = self.cached_model(a, v)
-                
                 loss = criterion(pred, label)
                 
-                loss += critic(embedding_a, embedding_v)
+                loss -= critic(embedding_a, embedding_v).mean()
+
+                if self.cached_model is not None:
+                    with torch.no_grad():
+                        self.cached_model.eval()
+                        _, _embedding_a, _embedding_v  = self.cached_model(a, v)
                 
-                loss += (
-                    critic(embedding_a, _embedding_a) +
-                    critic(embedding_v, _embedding_v) +
-                    critic(embedding_a, _embedding_v) +
-                    critic(embedding_v, _embedding_a)
-                )/4
+                    loss += (-(
+                        critic(embedding_a, _embedding_a) +
+                        critic(embedding_v, _embedding_v) +
+                        critic(embedding_a, _embedding_v) +
+                        critic(embedding_v, _embedding_a)
+                    )/4).mean()
                 
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -101,7 +102,7 @@ class Server(fed.Server):
         self.aggregated_params = None
     
     def aggregate(self):
-        self.aggregated_params = fedAvg(self.uploaded_params, self.weights)
+        self.aggregated_params = fedAvg([v['model_param'] for v in self.uploaded_params], self.weights)
     
     def get_model(self):
         return self.aggregated_params
@@ -184,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_decay_ratio', default=0.1, type=float)
     
     
-    parser.add_argument('--user-tensorboard', action='store_true')
+    parser.add_argument('--use-tensorboard', action='store_true')
     
     
     args = parser.parse_args()
@@ -196,10 +197,11 @@ if __name__ == '__main__':
     
     device = None
     if not args.disable_cuda and torch.cuda.is_available():
-        device = torch.device('cuda')
+        device = torch.device('cuda:2')
     else:
         device = torch.device('cpu')
         
+    print(device)
     
 
 
@@ -244,12 +246,11 @@ if __name__ == '__main__':
             weight_decay=optimizer_config['weight_decay']
         )
         _scheduler = torch.optim.lr_scheduler.StepLR(_optimizer, 
-            lr_decay_step=scheduler_config['lr_decay_step'],
             step_size=scheduler_config['lr_decay_step'],
             gamma=scheduler_config['lr_decay_ratio']
         )
-        _csv_path = os.path.join(local_train_config['csv_path'], f'{i}'.csv)
-        _dataloader = Dataloader(
+        _csv_path = os.path.join(local_train_config['csv_path'], f'{i}.csv')
+        _dataloader = DataLoader(
             ravdess.ravdess_dataset(
                 src_path=local_train_config['data_path'],
                 csv_path=_csv_path,
@@ -257,6 +258,8 @@ if __name__ == '__main__':
             ),
             batch_size=local_train_config['batch_size'],
             shuffle=True,
+            num_workers=32,
+            pin_memory=True
         )
         
         weights[i] = len(_dataloader.dataset)
@@ -264,7 +267,7 @@ if __name__ == '__main__':
         
         
         clients.append(
-            Client(model=_model, optimzier=_optimizer, scheduler=_scheduler,
+            Client(model=_model, optimizer=_optimizer, scheduler=_scheduler,
                    dataloader=_dataloader, local_epoch=local_train_config['epoch'],
                    device=local_train_config['device'])
         )
@@ -273,28 +276,34 @@ if __name__ == '__main__':
     
     weights = weights / weights.sum()
     
-    
     _val_csv_path = os.path.join(
-        local_train_config['csv_path'], 'test.csv'
+        local_train_config['csv_path'], 'test.csv' 
     )
     
-    
+    _val_dataloader = DataLoader(
+        ravdess.ravdess_dataset(
+            src_path=local_train_config['data_path'],
+            csv_path=_val_csv_path,
+            frame_num=local_train_config['num_frame']
+        ),
+        batch_size=32
+    )
     
     
     
     server = Server(
         model=AVNet(output_dim=8),
-        src_path=args.data_path,
-        val_csv_path=_val_csv_path,
+        dataloader=_val_dataloader,
+        device=device,
         weights=weights
     )
+     
     
-    
-    
-    # framework = fed.fed_framework(
-    #     clients=clients, server=server,
-    #     num_client=args.num_client, num_thread=args.num_thread,
-    #     round=args.round
-    # )
+    framework = fed.fed_framework(
+         clients=clients, server=server,
+         num_client=args.num_client, num_thread=args.num_thread,
+         global_round=args.round
+     )
+    framework.run()
     
     

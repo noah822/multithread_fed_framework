@@ -100,8 +100,8 @@ class ravdess_dataset(Dataset):
             _remainder = (_standard_size - _size) % 2
             sample = np.pad(sample, (_padding, _padding+_remainder), 'constant', constant_values=0)
         else:
-            _padding = _standard_size - _size
-            sample = sample[_padding, _padding + _standard_size]
+            _padding = _size - _standard_size
+            sample = sample[_padding : _padding + _standard_size]
         
         mfcc = librosa.feature.mfcc(y=sample, sr=rate, n_mfcc=39)
         mfcc = torch.tensor(np.expand_dims(mfcc, axis=0))

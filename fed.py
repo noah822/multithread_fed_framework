@@ -15,6 +15,9 @@ from itertools import chain
 import pandas as pd
 import numpy as np
 
+
+from time import time
+
 def _return_type_check(check, err_message=None):
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -42,7 +45,7 @@ class _meta_checker:
         
 
 
-class Client(ABC, metaclass=_meta_checker):
+class Client(ABC):
     
     
     def __init__(self):
@@ -161,10 +164,11 @@ class fed_framework:
         self.clients = clients
         self.server = server
         
-        self.gloabl_round = global_round
+        self.global_round = global_round
         self.cur_round = 0
         
         self.num_thread = num_thread
+        print(num_thread)
         self.num_client = num_client
         
         
@@ -216,13 +220,15 @@ class fed_framework:
             
             for i in range(self.num_thread):
                 _threads.append(
-                    Thread(target=_thread_train),
+                    Thread(target=_thread_train,
                             args=(
                                 self.clients[i*clients_per_thread : (i+1)*clients_per_thread],
                                 i*clients_per_thread
                             )
                         )
-                
+                    )
+
+        start = time() 
             
         for round in range(self.global_round):
             
@@ -234,7 +240,7 @@ class fed_framework:
                 for client in self.clients:
                     client.load_model(self.server.get_model())
             
-            if self.num_thread > 0:        
+            if self.num_thread > 1:        
                 for _thread in _threads: _thread.start()
                 for _thread in _threads: _thread.join()
             else:
@@ -266,7 +272,10 @@ class fed_framework:
                 
             if self.clients[0].logging and self.writer is not None:
                 self.__clients_tb_logging(_clients_loss)
-            
+
+        end = time()
+        print('{:.2s}'.format(end-start))
+        self.save_framework_state() 
     
     
     def save_framework_state(self):
