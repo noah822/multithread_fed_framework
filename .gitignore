@@ -1,4 +1,6 @@
 **/__pycache__
 dataset/raw
 **/test.py
+**/.DS_Store
+.env
 runs

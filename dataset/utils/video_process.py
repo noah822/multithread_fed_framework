@@ -7,7 +7,7 @@ def video_process(
     save_path=None
 ):
     '''
-        src_dir:   directory of videos to be processed
+        src_path:   d of videos to be processed
         frame_num: the number of images expected to be extracted from a given video, default `1`
                    interval of image extraction is #frame_count/(frame_num+1)
                    
@@ -60,7 +60,7 @@ def video_process(
     cmd = f'ffmpeg -loglevel error -i {src_path} {_save_path}'
     
     os.system(cmd)
-
+os.li
 
 
             
