@@ -1,4 +1,5 @@
 from threading import Thread
+from multiprocessing import Process
 import argparse
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -120,6 +121,7 @@ class fed_framework:
                  global_round,
                  num_client=10, num_thread=10,
                  mode='new',
+                 personalize=False,
                  resume_mode='load_last', resume_overwrite=True,
                  use_tensorboard=True, tensorboard_path='./runs', tensorboard_sp=0,
                  ckpt_path='./fed_ckpt'):
@@ -164,6 +166,7 @@ class fed_framework:
         self.clients = clients
         self.server = server
         
+        self.personalize = personalize
         self.global_round = global_round
         self.cur_round = 0
         
@@ -175,29 +178,13 @@ class fed_framework:
         self.ckpt_path = ckpt_path
         self.writer = None
         if use_tensorboard:
-            self.wrtier = SummaryWriter(tensorboard_path)
+            self.writer = SummaryWriter(tensorboard_path)
             self.cur_round = tensorboard_sp
-            
-        # if mode == 'new':
-            
-        #     for _label in range(num_client):
-        #         _model = self.model(**model_config)
-        #         _optimizer = self.optimizer(_model.parameters(), **optimizer_config)
-        #         _scheduler = torch.optim.lr_scheduler.StepLR(
-        #             _optimizer,
-        #             **scheduler_config
-        #         )
-                
-        #         self.clients.append(
-        #             Client(label=_label, model=_model,
-        #                 optimizer=_optimizer, scheduler=_scheduler,
-        #                 train_config=local_train_config
-        #             )
-        #         )
-        #         self.server = Server()
-                    
-        # elif args.mode == 'resume':
-        #     self.clients, self.server = self.load_framework_state()
+        
+        
+    def __thread_train(self, clients, _base):
+        for i, client in enumerate(clients):
+            _clients_loss[_base+i] = client.train()   
             
         
     
@@ -206,11 +193,7 @@ class fed_framework:
         
         _clients_loss = [None for _ in range(self.num_client)]
         if self.num_thread > 0:
-            
-            
-            def _thread_train(clients, _base):
-                for i, client in enumerate(clients):
-                    _clients_loss[_base+i] = client.train()    
+             
             
             
             _threads = []
@@ -220,7 +203,7 @@ class fed_framework:
             
             for i in range(self.num_thread):
                 _threads.append(
-                    Thread(target=_thread_train,
+                    Thread(target=self.__thread_train,
                             args=(
                                 self.clients[i*clients_per_thread : (i+1)*clients_per_thread],
                                 i*clients_per_thread
@@ -238,8 +221,12 @@ class fed_framework:
                 clients load aggreated model from server
             '''
             if round > 0: 
-                for client in self.clients:
-                    client.load_model(self.server.get_model())
+                if not self.personalize:
+                    for client in self.clients:
+                        client.load_model(self.server.get_model())
+                else:
+                    for i, client in enumerate(self.clients):
+                        client.load_model(self.server.get_model(i))
             
             if self.num_thread > 1:        
                 for _thread in _threads: _thread.start()
@@ -269,13 +256,16 @@ class fed_framework:
             
             
             if self.server.logging and self.writer is not None:
+                print('server start logging!!')
                 self.__server_tb_logging(_val_res)
                 
             if self.clients[0].logging and self.writer is not None:
+                print('clients start logging!!')
                 self.__clients_tb_logging(_clients_loss)
 
         end = time()
-        print('{:.2}s'.format(end-start))
+        _time = end-start
+        print('{}min {}s'.format(int(_time // 60), int(_time % 60)))
         self.save_framework_state() 
     
     
@@ -299,7 +289,15 @@ class fed_framework:
                 client.state(),
                 os.path.join(_clients_save_path, f'{i}.pt')
             )
-            
+    
+    
+    def __reset__attribute(self, **kwargs):
+        for (k, v) in kwargs:
+            if k not in self.__dict__:
+                raise 'wrong fed_framework attribute name, please double-check'
+            else:
+                self.__dict__[k] = v
+    
     
     def load_framework_state(self, ckpt_path):
         if not os.path.isdir(ckpt_path):
@@ -318,6 +316,9 @@ class fed_framework:
                 torch.load(_path)
             )
             
+        # self.__reset__attribute(**kwargs)
+        
+            
         
     def __server_tb_logging(self, data):
         graph_name = 'server/Accuracy'
@@ -329,17 +330,20 @@ class fed_framework:
         graph_name = 'client/Loss'
         num_sub_graph = int((self.num_client-1)/cluster_size) + 1
         
+        
         for k in range(num_sub_graph):
             _graph_name = '{}/{}-{}'.format(
                 graph_name,
                 k*cluster_size,
                 min(self.num_client-1, (k+1)*cluster_size-1)          
             )
-            _step_base = self.cur_round * data[0].shape[0] + 1
+            _step_base = self.cur_round * len(data[0]) + 1
             _client_base = k * cluster_size
-            _data = np.array(data[k*cluster_size: (k+1)*cluster_size]).T
+            _data = np.array(
+                [ [ _e.cpu().data.numpy() for _e in _c ]for _c in data[k*cluster_size: (k+1)*cluster_size]]
+            ).T
             for i, v in enumerate(_data):
-                self.writer.add_scalar(_graph_name, 
+                self.writer.add_scalars(_graph_name, 
                     {'{}'.format(_client_base + c) : v[c] for c in range(len(v))},
                     _step_base + i
                 )

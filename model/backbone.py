@@ -109,7 +109,71 @@ class AVNet(nn.Module):
         
         
         return pred, embedding_a, embedding_v
+class result_level_fusion(nn.Module):
+    def __init__(self, output_dim):
+        super().__init__()
+        
+        self.audio_net = ResNet_18(input_channels=1)
+        self.visual_net = ResNet_18(input_channels=3)
+        
+        self.ada_pool_a = nn.AdaptiveAvgPool2d((1,1))
+        self.ada_pool_v = nn.AdaptiveAvgPool2d((1,1))
+        self.flatten_a = nn.Flatten()
+        self.flatten_v = nn.Flatten()
+        
+        self.hidden_a = nn.Linear(512, 128)
+        self.hidden_v = nn.Linear(512, 128)
+        
+        self.out_a = nn.Linear(128, output_dim)
+        self.out_v = nn.Linear(128, output_dim)
+        
+        
+        
+    def forward(self, a, v):
+        a = self.audio_net(a)
+        v = self.visual_net(v)
+        
+        a = self.flatten_a(self.ada_pool_a(a))
+        v = self.flatten_v(self.ada_pool_v(v))
+        
+        logits_a = self.out_a(self.hidden_a(a))
+        logits_v = self.out_v(self.hidden_v(v))
+    
+        
+        pred = logits_a + logits_v
+        
+        return pred, logits_a, logits_v
 
+class late_fusion(nn.Module):
+    def __init__(self, output_dim):
+        super().__init__()
+        
+        self.audio_net = ResNet_18(input_channels=1)
+        self.visual_net = ResNet_18(input_channels=3)
+        
+        self.ada_pool_a = nn.AdaptiveAvgPool2d((1,1))
+        self.ada_pool_v = nn.AdaptiveAvgPool2d((1,1))
+        self.flatten_a = nn.Flatten()
+        self.flatten_v = nn.Flatten()
+        
+        self.mlp= nn.Sequential(
+            nn.Linear(512, 256),
+            nn.Linear(256, 128),
+            nn.Linear(128, output_dim)
+        )
+        
+        
+        
+    def forward(self, a, v):
+        a = self.audio_net(a)
+        v = self.visual_net(v)
+        
+        a = self.flatten_a(self.ada_pool_a(a))
+        v = self.flatten_v(self.ada_pool_v(v))
+        
+        pred = self.mlp(a + v)
+        
+        return pred, None, None
 
 if __name__ == '__main__':
     a = torch.zeros((1, 1, 39, 196))
